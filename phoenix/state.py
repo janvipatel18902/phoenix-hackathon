@@ -200,7 +200,20 @@ def resolve_verification(
     }:
         raise StateTransitionError(f"{target_state} is not a valid verification outcome")
     task_id = task["_id"]
-    extra = {"verified_effect": effect_doc["observation"]} if target_state == TaskState.VERIFIED else {}
+    extra: dict[str, Any] = {}
+    if target_state == TaskState.VERIFIED:
+        extra["verified_effect"] = effect_doc["observation"]
+    elif target_state == TaskState.NEEDS_HUMAN:
+        # explain() reads last_error, so it must say *why*, not just that it
+        # did -- "cannot verify" is actively wrong for the differs-from-
+        # expected case, where the read succeeded and the mismatch is the point.
+        if effect_doc["observation"]:
+            extra["last_error"] = (
+                f"applied but differs from expected: observed {effect_doc['observation']}, "
+                f"expected {effect_doc['expected']} -- flagged for manual review, never auto-corrected"
+            )
+        else:
+            extra["last_error"] = "cannot verify external state (read failed or returned an unrecognized shape)"
 
     def _do(session: Any) -> dict[str, Any]:
         updated = _cas(db, session, task_id, {TaskState.VERIFYING}, target_state, extra_set=extra)
