@@ -1,6 +1,6 @@
 """Drift handling for the worker: detect, recall or diagnose, canary, activate.
 
-Engine integration (CONTRACTS.md section 11):
+Engine integration (CONTRACTS.md section 10):
   - before sending a REFUND:  request = adapt_request(db, task, request)
   - after a 422 is recorded:  outcome = resolve_drift(...); on ADAPTED the normal
     same-key retry rebuilds the request through adapt_request; on NEEDS_HUMAN

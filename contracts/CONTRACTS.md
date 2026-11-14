@@ -225,14 +225,14 @@ Allowed ops ONLY: `rename_field`, `scale_value`, `add_field`, `remove_field`. `a
 Canary: apply the spec to the first affected REFUND and DRY-RUN it (`POST /payments/refunds?dry_run=true`, section 5). Compare `would_store` to the task's `expected_effect`.
 - Mismatch: save a `negative` memory, record an `effects` doc with `source: canary` and `matches_expected: false`, emit `CANARY_FAILED`. NOTHING is sent for real, so no money moves.
 - Match: send that task for real through the normal path (intent, send, external-read verify), emit `CANARY_PASSED`, then continue the batch and save or reinforce the memory.
-The demo's wrong first proposal is the spec above WITHOUT the `scale_value` op (it would store 85 minor units instead of 8500); the dry run must catch it.
+The demo's wrong first proposal (env `PHOENIX_DEMO_WRONG_FIRST=1`, first proposal only) is the spec above with `scale_value` `factor: 1`: it converts the string to an integer but forgets the x100, so the dry run would store 85 minor units instead of 8500 and the canary catches it. (A spec with no `scale_value` at all is also caught: the dry run returns 422 because `amount_minor` is a string.) A canary that cannot reach payments is NEEDS_HUMAN, not a failed canary, and saves no memory.
 
 ---
 
 ## 7. API service (port 8000)
 - `POST /runs` body `{ "instruction": "...", "event_id": "evt_concert_001" }` -> `201 { "run_id" }`
 - `GET /runs/{run_id}` -> run doc plus `state_counts`.
-- `GET /runs/{run_id}/grid` -> `{ "cells": [ { "attendee_id": "att_001", "state": "VERIFIED" } ] }` (200 cells; each cell shows the least-advanced state among that attendee's tasks).
+- `GET /runs/{run_id}/grid` -> `{ "cells": [ { "attendee_id": "att_001", "state": "VERIFIED" } ], "venue": "PLANNED" }` (200 cells). Each cell shows NEEDS_HUMAN if any of that attendee's tasks is NEEDS_HUMAN, else UNKNOWN if any is UNKNOWN, else the least-advanced state (attention states win so they are never hidden behind a PLANNED notification). `venue` is the RELEASE_VENUE task state.
 - `GET /runs/{run_id}/tasks?state=UNKNOWN`
 - `GET /runs/{run_id}/explain` ->
 ```json
@@ -241,13 +241,15 @@ The demo's wrong first proposal is the spec above WITHOUT the `scale_value` op (
   "next":     [ { "task_id": "...", "action": "escalate to human", "reason": "applied but amount differs" } ] }
 ```
 - `GET /events?run_id=...` Server-Sent Events (`text/event-stream`); each `data:` line is one `events` document; supports `Last-Event-ID` with the event `_id` order.
-- `GET /reality` -> `{ "belief": { "verified_refunds": 87, "verified_minor": 739500 }, "reality": { ...mock /admin/reality... } }`
+- `GET /reality[?run_id=]` -> `{ "run_id", "belief": { "verified_refunds": 87, "verified_minor": 739500, "verified_cancellations", "verified_notifications", "venue_released" }, "reality": { ...mock /admin/reality... } | null, "reality_error": null }` (belief counts only VERIFIED tasks).
 - `POST /chaos/{name}` -> proxies to the mock `/admin/chaos/{name}`.
 - `POST /agent/kill` -> SIGKILL the worker, returns `{ "pid" }`; emits `WORKER_KILLED`.
-- `POST /agent/start` -> spawns the worker; returns `{ "pid" }`.
+- `POST /agent/start` body (optional) `{ "crash_at": "after_send:262", "demo_wrong_first": false }` -> spawns the worker (`PHOENIX_CRASH_AT`, `PHOENIX_DEMO_WRONG_FIRST` in its env); returns `{ "pid" }`. 409 if no PLANNING/RUNNING run exists or a worker is already alive. Emits `WORKER_STARTED` (source api).
 - `GET /agent/status` -> `{ "alive": true, "pid": 4242, "heartbeat_age_s": 1.2 }`
 - `POST /runs/{run_id}/wipe_state` -> deletes that run's tasks/attempts/effects (the amnesia demo); emits `STATE_WIPED`.
-- `POST /runs/{run_id}/reconcile` -> starts reconcile (the worker runs it).
+- `POST /runs/{run_id}/reconcile[?start_worker=true]` -> 202; runs `phoenix.reconcile.trigger_reconcile` in a background thread inside the API process (requires the agent to be dead), then starts the worker unless `start_worker=false`. `GET /runs/{run_id}/reconcile` -> `{ running, result, error }`.
+- Additions beyond the original list: `GET /runs` (latest 20), `GET /chaos` (mock chaos state), `GET /memories` (recovery_memories without embeddings), `GET /runs/{run_id}/attempts/{task_id}`. `POST /runs` returns 409 while a PLANNING/RUNNING run exists. `wipe_state` and `reconcile` return 409 while the agent is alive. `GET /events` accepts `tail` (default 100: replay the last N events when there is no `Last-Event-ID`).
+- SSE resume: event `_id` is an ObjectId string, but ids from two processes created in the same second are not strictly ordered, so the stream re-reads from 3 s before its cursor and de-duplicates by id. Clients must de-duplicate by `_id` as well.
 - `GET /learning/stats` -> `{ "runs": [ { "run_id", "event_id", "diagnosis_calls": 1, "memory_hits": 0, "duration_s": 41.2 } ] }`
 - `POST /reset` -> resets mock world, clears this app's collections, keeps `recovery_memories` unless `?keep_memories=false`.
 
@@ -281,7 +283,13 @@ PHOENIX_CRASH_AT=
 
 ---
 
-## 10. Change log
+## 10. Drift hook (engine integration, for Person A)
+`phoenix/drift/canary.py` is finished and tested. It is NOT yet called by the worker. Without these two calls, a payments API change ends in a retry loop and NEEDS_HUMAN for every refund.
+1. Before sending a REFUND (inside the request-building step): `request, spec_id = adapt_request(db, task, request)`. It applies the run's active spec if there is one (`runs.active_adaptations["payments:create_refund"] = { spec_id, memory_id, spec }`), else returns the request unchanged. Store `spec_id` in `task.adaptation_spec_id`. It raises `SpecError` if a stored spec cannot apply: escalate that task.
+2. Right after `record_result` stored an attempt whose `http_status == 422` for a payments task: `outcome = resolve_drift(db, client, task, request, http_status, response)`. `outcome.status` is `ADAPTED` (the normal same-key FAILED_NOT_APPLIED retry then rebuilds the request through `adapt_request`), `NEEDS_HUMAN` (call `escalate`) or `NOT_DRIFT` (carry on as today).
+`resolve_drift` emits DRIFT_DETECTED, MEMORY_RETRIEVED, ADAPTATION_PROPOSED, CANARY_STARTED/PASSED/FAILED, MEMORY_SAVED and updates `runs.stats.diagnosis_calls|llm_calls|memory_hits` and `runs.api_versions_seen`. It sends nothing real: the canary is a dry run. `canary.py` imports `phoenix.worker.emit_event` lazily to avoid a circular import. Tests: `pytest -q phoenix/drift/`.
+
+## 11. Change log
 (Add one line per change: date/time, who, what, which section.)
 - 2026-11-14, Person A, moved this file from repo root to contracts/CONTRACTS.md to match CLAUDE.md's layout; added two recovery/reconcile-only transitions (INTENT_RECORDED -> VERIFYING, PLANNED -> VERIFYING) needed to implement the "always verify before resend" rule in section 3 and the amnesia-reconcile flow; section 3.
 - 2026-11-14, Person A, added EMBEDDING_BASE_URL to section 9: embeddings go through MongoDB Atlas's hosted AI Model API (ai.mongodb.com, a Voyage AI proxy billed under the Atlas sandbox project) rather than a direct Voyage AI account, so phoenix/drift/memory.py needs a base URL, not just a provider name.
@@ -294,3 +302,6 @@ PHOENIX_CRASH_AT=
 - 2026-11-14, Person B, chaos latency/drop/fail apply to committing POST requests only; GETs and dry runs are never affected; `clear` also resets payments to v1; defined `nth` and the fail/drop ordering; section 5 (Admin and chaos).
 - 2026-11-14, Person B, added payments dry run `POST /payments/refunds?dry_run=true` returning `{dry_run, would_store}` without committing; section 5 (Payments).
 - 2026-11-14, Person B, canary now dry-runs the first affected REFUND, compares `would_store` to `expected_effect`, and only sends for real on a match; a mismatch saves a negative memory and sends nothing; section 6. (Resolves the conflict with invariant 5.)
+- 2026-11-14, Person B, API additions and rules (section 7): grid cell priority (attention states win) plus `venue`; `/reality` belief extras and `run_id`; `/agent/start` body; reconcile runs in the API process via `trigger_reconcile`; `GET /runs`, `/chaos`, `/memories`, attempts; SSE `tail` and ObjectId lookback/dedupe; 409 rules.
+- 2026-11-14, Person B, section 6: the demo's wrong first proposal is now `scale_value` with `factor: 1` (not "no scale op"), because the mock rejects a string `amount_minor` with 422 instead of storing 85; a canary that cannot reach payments is NEEDS_HUMAN with no memory saved.
+- 2026-11-14, Person B, new section 10: drift hook the worker must call (`adapt_request`, `resolve_drift`); `runs.active_adaptations` field.
