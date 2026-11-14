@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,6 +20,7 @@ import httpx
 from phoenix.drift.spec import SpecContext, SpecError
 
 LLM_TIMEOUT_S = 30.0
+MAX_RETRY_WAIT_S = 3.0
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 # Constants the heuristic may fill in for a newly required field. Derived from
 # what this agent is doing (cancelling an event); anything else is unresolvable.
@@ -171,6 +173,24 @@ def _llm_prompt(
     )
 
 
+def _retry_after_s(resp: httpx.Response) -> float:
+    try:
+        return float(resp.headers.get("retry-after", "inf"))
+    except ValueError:
+        return float("inf")
+
+
+def normalize_llm_spec(spec: dict[str, Any]) -> dict[str, Any]:
+    """Accept the one harmless spelling variation models produce
+    ("round_half_up"); everything else is left for the validator to reject."""
+    for op in spec.get("ops", []):
+        if isinstance(op, dict) and isinstance(op.get("rounding"), str):
+            op["rounding"] = (
+                op["rounding"].lower().replace("-", "_").removeprefix("round_")
+            )
+    return spec
+
+
 def _llm_provider() -> str:
     explicit = os.environ.get("LLM_PROVIDER", "").lower()
     if explicit:
@@ -202,17 +222,23 @@ def _call_groq(prompt: str) -> str:
     base = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
     if not key or not model:
         raise LLMError("GROQ_API_KEY / GROQ_MODEL not set")
-    resp = httpx.post(
-        f"{base}/chat/completions",
-        headers={"Authorization": f"Bearer {key}"},
-        json={
-            "model": model,
-            "temperature": 0,
-            "max_tokens": 2000,  # headroom: reasoning models think before answering
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=LLM_TIMEOUT_S,
-    )
+    for attempt in range(2):
+        resp = httpx.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {key}"},
+            json={
+                "model": model,
+                "temperature": 0,
+                "max_tokens": 2000,  # headroom: reasoning models think before answering
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=LLM_TIMEOUT_S,
+        )
+        wait = _retry_after_s(resp)
+        if resp.status_code == 429 and attempt == 0 and wait <= MAX_RETRY_WAIT_S:
+            time.sleep(wait)  # a short rate limit is worth one retry; a long one is not
+            continue
+        break
     resp.raise_for_status()
     return str(resp.json()["choices"][0]["message"]["content"])
 
@@ -226,6 +252,8 @@ def call_llm(prompt: str) -> str:
         raise LLMError("no LLM provider configured")
     try:
         return callers[provider](prompt)
+    except httpx.HTTPStatusError as exc:
+        raise LLMError(f"LLM call failed: HTTP {exc.response.status_code}") from exc
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         raise LLMError(f"LLM call failed: {type(exc).__name__}") from exc
 
@@ -259,8 +287,10 @@ def propose_spec(
             spec, used_llm=False, note="demo: deliberately incomplete first proposal"
         )
     try:
-        spec = parse_llm_json(
-            call_llm(_llm_prompt(system, signature, ctx, rejected, feedback or []))
+        spec = normalize_llm_spec(
+            parse_llm_json(
+                call_llm(_llm_prompt(system, signature, ctx, rejected, feedback or []))
+            )
         )
         return Proposal(spec, used_llm=True, note="proposed by the LLM")
     except LLMError as exc:

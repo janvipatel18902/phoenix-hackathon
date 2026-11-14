@@ -21,6 +21,17 @@ const CHAOS = [
   ["Clear chaos", "clear", {}],
 ];
 
+// Events that tell the self-healing story: [label, colour].
+const HEAL = {
+  DRIFT_DETECTED: ["API change detected", "amber"],
+  MEMORY_RETRIEVED: ["remembered a similar fix", "blue"],
+  ADAPTATION_PROPOSED: ["fix proposed", "blue"],
+  CANARY_STARTED: ["testing fix (dry run)", "blue"],
+  CANARY_FAILED: ["test failed, fix rejected", "red"],
+  CANARY_PASSED: ["test passed", "green"],
+  MEMORY_SAVED: ["lesson saved", "green"],
+};
+
 const $ = (id) => document.getElementById(id);
 const app = { runId: null, es: null, seen: new Set(), busy: false };
 
@@ -72,6 +83,10 @@ function buildLegend() {
 
 function renderGrid(grid) {
   const host = $("grid");
+  // A small demo event gets big cells so every state is easy to read.
+  host.style.setProperty("--cols", grid.cells.length <= 40 ? 10 : 20);
+  host.classList.toggle("big", grid.cells.length <= 40);
+  $("grid-n").textContent = grid.cells.length;
   if (host.children.length !== grid.cells.length) {
     host.replaceChildren(...grid.cells.map(() => el("div", undefined, "cell")));
   }
@@ -128,7 +143,8 @@ function renderTruth(data) {
 function addEvent(ev) {
   if (app.seen.has(ev._id)) return;
   app.seen.add(ev._id);
-  const li = el("li", undefined, ev.level);
+  if (HEAL[ev.type]) addChip(ev);
+  const li = el("li", undefined, `${ev.level} t-${ev.type}`);
   const time = el("time", new Date(ev.ts).toLocaleTimeString("en-GB"));
   const body = el("div");
   body.append(el("span", ev.type, "type"), document.createTextNode(ev.message));
@@ -140,10 +156,26 @@ function addEvent(ev) {
   if (atBottom) feed.scrollTop = feed.scrollHeight;
 }
 
+function addChip(ev) {
+  const [label, colour] = HEAL[ev.type];
+  const chips = $("heal-chips");
+  const chip = el("span", label, `chip ${colour}`);
+  chip.title = ev.message;
+  chips.append(chip);
+  while (chips.children.length > 10) chips.firstChild.remove();
+  $("heal").hidden = false;
+}
+
+function clearHeal() {
+  $("heal-chips").replaceChildren();
+  $("heal").hidden = true;
+}
+
 function openStream(runId) {
   if (app.es) app.es.close();
   app.seen = new Set();
   $("feed").replaceChildren();
+  clearHeal();
   app.es = new EventSource(`/events?run_id=${encodeURIComponent(runId)}`);
   app.es.onmessage = (m) => addEvent(JSON.parse(m.data));
 }
@@ -228,11 +260,14 @@ function wire() {
   $("btn-start").addEventListener("click", () => act("start agent", startAgent));
   $("btn-kill").addEventListener("click", () => act("kill", () => api("/agent/kill", { method: "POST" })));
   $("btn-reset").addEventListener("click", () => act("reset", async () => {
-    if (!confirm("Reset the mock world and clear runs? Learned memories are kept.")) return;
-    await api("/reset", { method: "POST" });
+    const n = Math.min(200, Math.max(1, parseInt($("opt-n").value, 10) || 20));
+    $("opt-n").value = n;
+    if (!confirm(`Reset the mock world to ${n} attendees and clear runs? Learned memories are kept.`)) return;
+    await api(`/reset?attendees=${n}`, { method: "POST" });
     app.runId = null;
     $("grid").replaceChildren();
     $("feed").replaceChildren();
+    clearHeal();
     $("run-pill").textContent = "no run";
   }));
   $("btn-wipe").addEventListener("click", () => act("wipe", async () => {
@@ -254,4 +289,6 @@ wire();
 refresh();
 refreshLearning();
 setInterval(refresh, 1000);
+// Keep the Explain panel current without a click (quietly: no error toasts).
+setInterval(() => { if (app.runId) api(`/runs/${app.runId}/explain`).then(renderExplain).catch(() => {}); }, 3000);
 setInterval(refreshLearning, 4000);
