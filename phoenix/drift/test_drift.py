@@ -421,3 +421,55 @@ def test_llm_failure_falls_back_to_the_heuristic(monkeypatch) -> None:
         apply_spec(validate_spec(proposal.spec, ctx()), V1_BODY, {})["amount_minor"]
         == 8500
     )
+
+
+def test_round_half_up_spelling_is_normalised_but_other_junk_is_not() -> None:
+    spec = diagnose.normalize_llm_spec(
+        with_ops(
+            {"op": "rename_field", "from": "amount", "to": "amount_minor"},
+            {
+                "op": "scale_value", "field": "amount_minor", "factor": 100,
+                "from_type": "decimal_string", "to_type": "integer", "rounding": "round_half_up",
+            },
+        )
+    )  # fmt: skip
+    assert validate_spec(spec, ctx())
+    spec["ops"][1]["rounding"] = "banana"
+    with pytest.raises(SpecError):
+        validate_spec(diagnose.normalize_llm_spec(spec), ctx())
+
+
+def _groq_env(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setenv("GROQ_MODEL", "m")
+    monkeypatch.setenv("GROQ_BASE_URL", "https://groq.test/openai/v1")
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+
+
+def test_short_rate_limit_is_retried_once(monkeypatch) -> None:
+    import httpx
+    import respx
+
+    _groq_env(monkeypatch)
+    ok = httpx.Response(200, json={"choices": [{"message": {"content": "{}"}}]})
+    with respx.mock:
+        route = respx.post("https://groq.test/openai/v1/chat/completions").mock(
+            side_effect=[httpx.Response(429, headers={"retry-after": "0"}), ok]
+        )
+        assert diagnose.call_llm("p") == "{}"
+    assert route.call_count == 2
+
+
+def test_long_rate_limit_falls_back_and_says_why(monkeypatch) -> None:
+    import httpx
+    import respx
+
+    _groq_env(monkeypatch)
+    sig = diagnose.build_signature("payments", 422, {"details": DETAILS})
+    with respx.mock:
+        route = respx.post("https://groq.test/openai/v1/chat/completions").mock(
+            return_value=httpx.Response(429, headers={"retry-after": "900"})
+        )
+        proposal = diagnose.propose_spec("payments", sig, ctx(), [])
+    assert route.call_count == 1  # no pointless retry for a 15-minute limit
+    assert not proposal.used_llm and "HTTP 429" in proposal.note

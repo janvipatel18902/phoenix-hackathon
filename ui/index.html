@@ -17,6 +17,7 @@
       <button id="btn-run" class="primary">Cancel the event</button>
       <button id="btn-start">Start agent</button>
       <button id="btn-kill" class="danger">Kill -9 the agent</button>
+      <label class="nlabel">attendees <input id="opt-n" type="number" min="1" max="200" value="20" aria-label="Number of attendees for the next reset"></label>
       <button id="btn-reset">Reset</button>
     </div>
   </header>
@@ -27,9 +28,11 @@
     <span id="toast" role="status"></span>
   </div>
 
+  <div id="heal" class="heal" hidden aria-live="polite"><span class="heal-title">Self-healing</span><span id="heal-chips"></span></div>
+
   <main>
     <section class="panel" id="grid-panel">
-      <h2>200 attendees <span class="sub" id="grid-sub"></span></h2>
+      <h2><span id="grid-n">0</span> attendees <span class="sub" id="grid-sub"></span></h2>
       <div id="grid" aria-label="Attendee progress grid"></div>
       <div id="legend"></div>
       <div id="venue-line">Venue booking: <b id="venue-state">-</b></div>

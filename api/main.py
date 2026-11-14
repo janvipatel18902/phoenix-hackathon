@@ -25,7 +25,7 @@ from bson import ObjectId
 from bson.errors import InvalidId
 from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from pymongo.database import Database
@@ -109,6 +109,15 @@ def pid_alive(pid: int) -> bool:
 
 def parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value)
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """A browser must never run a stale UI during a demo."""
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
 
 class RunRequest(BaseModel):
@@ -659,7 +668,7 @@ def create_app(
         return {"cleared": cleared, "kept_memories": keep_memories}
 
     if UI_DIR.exists():
-        app.mount("/", StaticFiles(directory=UI_DIR, html=True), name="ui")
+        app.mount("/", NoCacheStaticFiles(directory=UI_DIR, html=True), name="ui")
     return app
 
 
