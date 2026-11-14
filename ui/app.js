@@ -277,6 +277,18 @@ function wire() {
     clearHeal();
     $("run-pill").textContent = "no run";
   }));
+  $("btn-reset-memories").addEventListener("click", () => act("forget learned fixes", async () => {
+    const n = Math.min(200, Math.max(1, parseInt($("opt-n").value, 10) || 20));
+    $("opt-n").value = n;
+    if (!confirm(`Reset the mock world to ${n} attendees, clear runs, AND make the agent forget every fix it has learned? This cannot be undone.`)) return;
+    await api(`/reset?attendees=${n}&keep_memories=false`, { method: "POST" });
+    app.runId = null;
+    $("grid").replaceChildren();
+    $("feed").replaceChildren();
+    clearHeal();
+    $("run-pill").textContent = "no run";
+    refreshLearning();
+  }));
   $("btn-wipe").addEventListener("click", () => act("wipe", async () => {
     if (!app.runId) throw new Error("no run selected yet");
     if (!confirm("Wipe the agent's records for this run? The systems keep their real state.")) return;
