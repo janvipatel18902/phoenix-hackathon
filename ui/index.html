@@ -18,22 +18,24 @@
       <button id="btn-start">Start agent</button>
       <button id="btn-kill" class="danger">Kill -9 the agent</button>
       <label class="nlabel">attendees <input id="opt-n" type="number" min="1" max="200" value="20" aria-label="Number of attendees for the next reset"></label>
-      <button id="btn-reset">Reset</button>
+      <button id="btn-reset" class="ghost">Reset</button>
     </div>
   </header>
 
-  <p class="intro">Click <b>Cancel the event</b>: it cancels every ticket, refunds everyone, emails them, and releases the venue &mdash; then proves each of those actually happened by reading it back from the real systems. Use <b>Break things</b> below to inject a real-world failure, or <b>Kill -9 the agent</b> mid-run and <b>Start agent</b> again, to watch it recover without ever double-refunding anyone.</p>
+  <section class="toolbar-card">
+    <p class="intro">Click <b>Cancel the event</b>: it cancels every ticket, refunds everyone, emails them, and releases the venue &mdash; then proves each of those actually happened by reading it back from the real systems. Use <b>Break things</b> below to inject a real-world failure, or <b>Kill -9 the agent</b> mid-run and <b>Start agent</b> again, to watch it recover without ever double-refunding anyone.</p>
 
-  <div class="options">
-    <span class="opt-label">Before clicking Cancel the event / Start agent:</span>
-    <label title="Makes the agent's first attempt to fix a payments API change deliberately wrong, so you can watch the dry-run canary catch and reject it before any real refund goes out.">
-      <input type="checkbox" id="opt-wrong"> demo: first proposed API fix is wrong
-    </label>
-    <label title="Automatically kill the agent (SIGKILL) at an exact point, e.g. after_send:262 = right after task #262 sends its request but before it gets a response. Leave blank for a normal, uninterrupted run.">
-      crash at <input id="opt-crash" placeholder="after_send:262" size="14">
-    </label>
-    <span id="toast" role="status"></span>
-  </div>
+    <div class="options">
+      <span class="opt-label">Before clicking Cancel the event / Start agent</span>
+      <label title="Makes the agent's first attempt to fix a payments API change deliberately wrong, so you can watch the dry-run canary catch and reject it before any real refund goes out.">
+        <input type="checkbox" id="opt-wrong"> demo: first proposed API fix is wrong
+      </label>
+      <label title="Automatically kill the agent (SIGKILL) at an exact point, e.g. after_send:262 = right after task #262 sends its request but before it gets a response. Leave blank for a normal, uninterrupted run.">
+        crash at <input id="opt-crash" placeholder="after_send:262" size="14">
+      </label>
+      <span id="toast" role="status"></span>
+    </div>
+  </section>
 
   <div id="heal" class="heal" hidden aria-live="polite"><span class="heal-title">Self-healing</span><span id="heal-chips"></span></div>
 
