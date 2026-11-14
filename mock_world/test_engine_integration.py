@@ -120,3 +120,67 @@ def test_resume_after_crash_between_send_and_result_does_not_resend(world) -> No
         "refunds"
     ]
     assert len(found) == 1  # recovered by external read, not resent
+
+
+def _start_run(db: Any, run_id: str) -> None:
+    ts = now_iso()
+    db.runs.insert_one(
+        {
+            "_id": run_id, "instruction": "cancel", "event_id": "evt_concert_001",
+            "status": "PLANNING", "plan_fingerprint": "x", "assumptions": {"booking_id": "book_001"},
+            "stats": {}, "api_versions_seen": {"payments": 1}, "created_at": ts, "updated_at": ts,
+        }
+    )  # fmt: skip
+
+
+def test_payments_api_change_is_healed_by_the_canary_then_reused_in_run_two(
+    world, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The whole story with the real worker: v2 switch mid-flight, a deliberately wrong
+    first fix caught by the dry run (so no 85-cent refund), then memory reuse in run 2."""
+    mock, db = world
+    for name in ("GROQ_API_KEY", "EMBEDDING_BASE_URL", "EMBEDDING_DIM"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LLM_PROVIDER", "none")  # offline: the heuristic proposes
+    monkeypatch.setenv("PHOENIX_DEMO_WRONG_FIRST", "1")
+    mock.post("/admin/chaos/api_version", json={"system": "payments", "version": 2})
+
+    run_worker_for(db, mock, RUN)  # run 1 (the fixture already created RUN)
+    r = reality(mock)
+    assert r["payments"] == {
+        "refund_count": 200,
+        "total_minor": 1_700_000,
+        "duplicate_refunds": 0,
+    }
+    assert r["payments_api_version"] == 2
+    assert db.tasks.count_documents({"state": "VERIFIED"}) == 601
+    assert db.runs.find_one({"_id": RUN})["status"] == "COMPLETED"
+    types = [e["type"] for e in db.events.find({"run_id": RUN})]
+    assert types.count("DRIFT_DETECTED") == 1  # only the first refund discovers it
+    assert types.count("CANARY_FAILED") == 1 and types.count("CANARY_PASSED") == 1
+    assert db.recovery_memories.count_documents({"polarity": "negative"}) == 1
+    assert db.recovery_memories.count_documents({"polarity": "positive"}) == 1
+    refund = db.tasks.find_one({"_id": f"{RUN}:REFUND:att_200"})
+    assert (
+        refund["adaptation_spec_id"]
+        and refund["verified_effect"]["amount_minor"] == 8500
+    )
+
+    # Run 2: fresh world and a fresh run, but the memories survive.
+    mock.post("/admin/reset", json={"attendees": 200})
+    mock.post("/admin/chaos/api_version", json={"system": "payments", "version": 2})
+    _start_run(db, "run_it_002")
+    run_worker_for(db, mock, "run_it_002")
+    assert reality(mock)["payments"] == {
+        "refund_count": 200,
+        "total_minor": 1_700_000,
+        "duplicate_refunds": 0,
+    }
+    types2 = [e["type"] for e in db.events.find({"run_id": "run_it_002"})]
+    assert (
+        "MEMORY_RETRIEVED" in types2 and "CANARY_PASSED" in types2
+    )  # recalled AND re-tested
+    assert "CANARY_FAILED" not in types2
+    stats = db.runs.find_one({"_id": "run_it_002"})["stats"]
+    assert stats.get("memory_hits") == 1 and stats.get("diagnosis_calls", 0) == 0
+    assert db.recovery_memories.find_one({"polarity": "positive"})["success_count"] == 2
