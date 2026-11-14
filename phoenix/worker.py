@@ -358,6 +358,7 @@ def process_task(
     task = resolve_verification(db, task, effect_doc, next_state)
 
     if next_state == TaskState.VERIFIED:
+        db[RUNS].update_one({"_id": task["run_id"]}, {"$inc": {"stats.verified": 1}})
         emit_event(db, task["run_id"], EventLevel.INFO, EventType.VERIFIED,
                    f"{task['kind']} {task['ref']} verified.", task_id=task["_id"])
     elif next_state == TaskState.FAILED_NOT_APPLIED:
