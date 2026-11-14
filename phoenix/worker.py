@@ -18,6 +18,8 @@ from bson import ObjectId
 from pymongo.database import Database
 
 from phoenix.db import EVENTS, RUNS, TASKS, init_db, now_iso
+from phoenix.drift.canary import adapt_request, resolve_drift
+from phoenix.drift.spec import SpecError
 from phoenix.intents import idempotency_key
 from phoenix.models import (
     EffectSource,
@@ -322,6 +324,14 @@ def process_task(
 
     _maybe_crash(crash_at, "before_intent", seq)
     request = build_request(task)
+    if TaskKind(task["kind"]) == TaskKind.REFUND:
+        try:
+            request, spec_id = adapt_request(db, task, request)
+        except SpecError as exc:
+            return escalate(db, task["_id"], f"stored adaptation spec could not apply: {exc}")
+        if spec_id:
+            db[TASKS].update_one({"_id": task["_id"]}, {"$set": {"adaptation_spec_id": spec_id}})
+            task["adaptation_spec_id"] = spec_id
     task = record_intent(db, task, request, worker_pid)
     emit_event(db, task["run_id"], EventLevel.INFO, EventType.TASK_INTENT,
                f"Recorded intent for {task['kind']} {task['ref']}.", task_id=task["_id"])
@@ -339,6 +349,16 @@ def process_task(
     task = record_result(
         db, task, task["attempt_count"], outcome, target_state, http_status, response, error_sig
     )
+
+    if task["system"] == "payments" and http_status == 422:
+        drift_outcome = resolve_drift(db, client, task, request, http_status, response, emit=emit_event)
+        if drift_outcome.status == "NEEDS_HUMAN":
+            return escalate(db, task["_id"], drift_outcome.reason)
+        # ADAPTED or NOT_DRIFT: fall through to the normal verify path below.
+        # A 422 never commits anything, so the external read will confirm
+        # "not applied" and the existing same-key retry resends -- now
+        # through adapt_request again, which picks up the newly active spec.
+
     if target_state == TaskState.UNKNOWN:
         emit_event(db, task["run_id"], EventLevel.WARN, EventType.TASK_UNKNOWN,
                    f"{task['kind']} {task['ref']}: outcome unknown. Checking by external read.",

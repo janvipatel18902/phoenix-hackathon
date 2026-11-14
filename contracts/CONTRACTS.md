@@ -271,6 +271,9 @@ MOCK_WORLD_URL=http://localhost:8001
 LLM_PROVIDER=
 LLM_MODEL=
 LLM_API_KEY=
+GROQ_API_KEY=
+GROQ_MODEL=
+GROQ_BASE_URL=https://api.groq.com/openai/v1
 EMBEDDING_PROVIDER=
 EMBEDDING_BASE_URL=
 EMBEDDING_MODEL=
@@ -305,3 +308,4 @@ PHOENIX_CRASH_AT=
 - 2026-11-14, Person B, API additions and rules (section 7): grid cell priority (attention states win) plus `venue`; `/reality` belief extras and `run_id`; `/agent/start` body; reconcile runs in the API process via `trigger_reconcile`; `GET /runs`, `/chaos`, `/memories`, attempts; SSE `tail` and ObjectId lookback/dedupe; 409 rules.
 - 2026-11-14, Person B, section 6: the demo's wrong first proposal is now `scale_value` with `factor: 1` (not "no scale op"), because the mock rejects a string `amount_minor` with 422 instead of storing 85; a canary that cannot reach payments is NEEDS_HUMAN with no memory saved.
 - 2026-11-14, Person B, new section 10: drift hook the worker must call (`adapt_request`, `resolve_drift`); `runs.active_adaptations` field.
+- 2026-11-14, Person A, added GROQ_API_KEY/GROQ_MODEL/GROQ_BASE_URL to section 9: diagnose.py's `_llm_provider()` auto-detects "groq" whenever GROQ_API_KEY is set and LLM_PROVIDER isn't, so the sandbox's current .env (Groq-only, no explicit LLM_PROVIDER) already works correctly -- not a mismatch, just undocumented.
