@@ -8,3 +8,4 @@ venv/
 *.egg-info/
 mock_world/state.json
 mock_world/state.tmp
+logs/
