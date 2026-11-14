@@ -12,13 +12,19 @@ const COLORS = {
   VERIFYING: "--verifying", VERIFIED: "--verified", FAILED_NOT_APPLIED: "--retry", NEEDS_HUMAN: "--human",
 };
 const CHAOS = [
-  ["Lose next refund response", "drop_response_after_commit", { system: "payments", count: 1 }],
-  ["Fail next refund", "fail_before_commit", { system: "payments", count: 1 }],
-  ["Slow payments (5 s)", "latency", { system: "payments", ms: 5000, count: 3 }],
-  ["Payments API changes (v2)", "api_version", { system: "payments", version: 2 }],
-  ["Edit attendee att_120", "mutate_record", { attendee_id: "att_120", fields: { email: "new@example.com" } }],
-  ["Lose venue response", "drop_response_after_commit", { system: "venue", count: 1 }],
-  ["Clear chaos", "clear", {}],
+  ["Lose next refund response", "drop_response_after_commit", { system: "payments", count: 1 },
+    "The next refund is actually processed by payments, but the agent's connection drops before it sees the response (a timeout). Watch it recover by reading the real refund back, instead of blindly retrying and double-refunding."],
+  ["Fail next refund", "fail_before_commit", { system: "payments", count: 1 },
+    "The next refund request is rejected before anything is charged (a real failure, nothing happened). The agent retries with the same idempotency key."],
+  ["Slow payments (5 s)", "latency", { system: "payments", ms: 5000, count: 3 },
+    "Adds 5 seconds of latency to the next 3 payments calls, which is longer than the agent's own timeout — same effect as a dropped response: it must verify, not assume."],
+  ["Payments API changes (v2)", "api_version", { system: "payments", version: 2 },
+    "Simulates the payments API changing shape underneath the agent (the refund request it's been sending starts getting rejected). Triggers the self-healing flow: diagnose, propose a fix, dry-run it, then apply it."],
+  ["Edit attendee att_120", "mutate_record", { attendee_id: "att_120", fields: { email: "new@example.com" } },
+    "Changes attendee att_120's record (e.g. email) in the ticketing system after the agent already read it, simulating data drifting underneath an in-progress run."],
+  ["Lose venue response", "drop_response_after_commit", { system: "venue", count: 1 },
+    "The venue release actually happens, but the agent's connection drops before it sees the response. The venue release is one-shot and NOT idempotent, so this is the riskiest one to get wrong."],
+  ["Clear chaos", "clear", {}, "Removes every chaos rule set above (payments API version resets to v1 too). Does not undo anything already sent."],
 ];
 
 // Events that tell the self-healing story: [label, colour].
@@ -246,8 +252,9 @@ function renderExplain(ex) {
 
 function wire() {
   buildLegend();
-  $("chaos-buttons").replaceChildren(...CHAOS.map(([label, name, body]) => {
+  $("chaos-buttons").replaceChildren(...CHAOS.map(([label, name, body, description]) => {
     const b = el("button", label);
+    if (description) b.title = description;
     b.addEventListener("click", () => act(label, () => api(`/chaos/${name}`, { method: "POST", body })));
     return b;
   }));

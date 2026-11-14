@@ -22,9 +22,16 @@
     </div>
   </header>
 
+  <p class="intro">Click <b>Cancel the event</b>: it cancels every ticket, refunds everyone, emails them, and releases the venue &mdash; then proves each of those actually happened by reading it back from the real systems. Use <b>Break things</b> below to inject a real-world failure, or <b>Kill -9 the agent</b> mid-run and <b>Start agent</b> again, to watch it recover without ever double-refunding anyone.</p>
+
   <div class="options">
-    <label><input type="checkbox" id="opt-wrong"> demo: first proposed API fix is wrong</label>
-    <label>crash at <input id="opt-crash" placeholder="after_send:262" size="14"></label>
+    <span class="opt-label">Before clicking Cancel the event / Start agent:</span>
+    <label title="Makes the agent's first attempt to fix a payments API change deliberately wrong, so you can watch the dry-run canary catch and reject it before any real refund goes out.">
+      <input type="checkbox" id="opt-wrong"> demo: first proposed API fix is wrong
+    </label>
+    <label title="Automatically kill the agent (SIGKILL) at an exact point, e.g. after_send:262 = right after task #262 sends its request but before it gets a response. Leave blank for a normal, uninterrupted run.">
+      crash at <input id="opt-crash" placeholder="after_send:262" size="14">
+    </label>
     <span id="toast" role="status"></span>
   </div>
 
@@ -33,6 +40,7 @@
   <main>
     <section class="panel" id="grid-panel">
       <h2><span id="grid-n">0</span> attendees <span class="sub" id="grid-sub"></span></h2>
+      <p class="panel-sub">One cell per attendee, colored by its furthest-along task. Hover a cell for details. Orange/red cells need attention &mdash; they are never silently hidden behind a green one.</p>
       <div id="grid" aria-label="Attendee progress grid"></div>
       <div id="legend"></div>
       <div id="venue-line">Venue booking: <b id="venue-state">-</b></div>
@@ -40,6 +48,7 @@
 
     <section class="panel" id="truth-panel">
       <h2>What the agent believes vs what is true</h2>
+      <p class="panel-sub">The agent's own records, checked against the real ticketing/payments/notification/venue systems. If these ever disagree, that's a bug being caught, not hidden.</p>
       <table id="truth">
         <thead><tr><th></th><th>Agent believes<br><span class="sub">(verified)</span></th><th>Reality<br><span class="sub">(read from the systems)</span></th><th></th></tr></thead>
         <tbody></tbody>
@@ -49,21 +58,25 @@
 
     <section class="panel" id="chaos-panel">
       <h2>Break things</h2>
+      <p class="panel-sub">Each button injects a real-world failure into the mock systems (hover a button for what it does). Click one while a run is in progress and watch the feed and the grid react.</p>
       <div class="buttons" id="chaos-buttons"></div>
       <h2 class="spaced">Amnesia</h2>
+      <p class="panel-sub">Simulate total memory loss: the agent's own records are deleted, but the real systems keep their state. "Reconcile" rebuilds the agent's memory purely by re-reading reality &mdash; it never resends anything that already happened.</p>
       <div class="buttons">
-        <button id="btn-wipe" class="danger">Wipe agent memory</button>
-        <button id="btn-reconcile">Reconcile &amp; resume</button>
+        <button id="btn-wipe" class="danger" title="Delete this run's tasks/attempts/effects from the agent's own database. The real systems (tickets, payments, emails, venue) are untouched.">Wipe agent memory</button>
+        <button id="btn-reconcile" title="Rebuild this run's tasks from scratch and verify every one against the real systems, before resuming normal processing.">Reconcile &amp; resume</button>
       </div>
     </section>
 
     <section class="panel" id="feed-panel">
       <h2>What is happening</h2>
+      <p class="panel-sub">A live, plain-language narration of every step the agent takes, in order.</p>
       <ol id="feed" aria-live="polite"></ol>
     </section>
 
     <section class="panel" id="explain-panel">
       <h2>Explain <button id="btn-explain">Refresh</button></h2>
+      <p class="panel-sub">What the agent's plan was, what it has actually verified against the real systems so far, and what it believes is safe to do next.</p>
       <div class="cols3">
         <div><h3>Supposed to happen</h3><div id="ex-supposed" class="body">-</div></div>
         <div><h3>Actually happened (verified)</h3><div id="ex-actual" class="body">-</div></div>
@@ -73,7 +86,13 @@
 
     <section class="panel" id="learn-panel">
       <h2>What it has learned</h2>
-      <table id="learn-runs"><thead><tr><th>Run</th><th>Diagnosis calls</th><th>Memory hits</th><th>Seconds</th></tr></thead><tbody></tbody></table>
+      <p class="panel-sub">When a payments API change breaks a refund, the agent diagnoses a fix and tests it with a dry run before trusting it &mdash; and remembers the result so it's never diagnosed twice. A remembered fix is still re-tested every time, never applied blindly.</p>
+      <table id="learn-runs"><thead><tr>
+        <th>Run</th>
+        <th title="How many times the agent had to work out a fix for an API error from scratch (LLM call or built-in fallback).">Diagnosis calls</th>
+        <th title="How many times the agent reused a fix it had already learned, instead of diagnosing from scratch.">Memory hits</th>
+        <th>Seconds</th>
+      </tr></thead><tbody></tbody></table>
       <ul id="memories"></ul>
     </section>
   </main>

@@ -28,7 +28,11 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--sent); outl
 input { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; font: inherit; }
 .nlabel { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 14px; }
 .nlabel input { width: 64px; }
+.intro { margin: 0; padding: 10px 20px; color: var(--dim); font-size: 14px; max-width: 980px; }
+.intro b { color: var(--text); }
 .options { display: flex; gap: 20px; align-items: center; padding: 8px 20px; color: var(--dim); font-size: 14px; flex-wrap: wrap; }
+.opt-label { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; }
+.panel-sub { margin: -4px 0 12px; color: var(--dim); font-size: 13px; max-width: 60ch; }
 #toast { margin-left: auto; color: var(--warn); min-height: 1.4em; }
 .heal { margin: 0 20px; padding: 10px 14px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
 .heal[hidden] { display: none; }
