@@ -271,11 +271,18 @@ function wire() {
     $("run-pill").textContent = "no run";
   }));
   $("btn-wipe").addEventListener("click", () => act("wipe", async () => {
+    if (!app.runId) throw new Error("no run selected yet");
     if (!confirm("Wipe the agent's records for this run? The systems keep their real state.")) return;
     await api(`/runs/${app.runId}/wipe_state`, { method: "POST" });
   }));
-  $("btn-reconcile").addEventListener("click", () => act("reconcile", () => api(`/runs/${app.runId}/reconcile`, { method: "POST" })));
-  $("btn-explain").addEventListener("click", () => act("explain", async () => renderExplain(await api(`/runs/${app.runId}/explain`))));
+  $("btn-reconcile").addEventListener("click", () => act("reconcile", () => {
+    if (!app.runId) throw new Error("no run selected yet");
+    return api(`/runs/${app.runId}/reconcile`, { method: "POST" });
+  }));
+  $("btn-explain").addEventListener("click", () => act("explain", async () => {
+    if (!app.runId) throw new Error("no run selected yet");
+    renderExplain(await api(`/runs/${app.runId}/explain`));
+  }));
 }
 
 function startAgent() {
