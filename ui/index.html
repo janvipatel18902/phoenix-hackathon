@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Phoenix</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Phoenix <span class="tag">finishes the job</span></h1>
+    <div class="status">
+      <span id="run-pill" class="pill">no run</span>
+      <span id="agent-pill" class="pill">agent: ?</span>
+    </div>
+    <div class="actions">
+      <button id="btn-run" class="primary">Cancel the event</button>
+      <button id="btn-start">Start agent</button>
+      <button id="btn-kill" class="danger">Kill -9 the agent</button>
+      <button id="btn-reset">Reset</button>
+    </div>
+  </header>
+
+  <div class="options">
+    <label><input type="checkbox" id="opt-wrong"> demo: first proposed API fix is wrong</label>
+    <label>crash at <input id="opt-crash" placeholder="after_send:262" size="14"></label>
+    <span id="toast" role="status"></span>
+  </div>
+
+  <main>
+    <section class="panel" id="grid-panel">
+      <h2>200 attendees <span class="sub" id="grid-sub"></span></h2>
+      <div id="grid" aria-label="Attendee progress grid"></div>
+      <div id="legend"></div>
+      <div id="venue-line">Venue booking: <b id="venue-state">-</b></div>
+    </section>
+
+    <section class="panel" id="truth-panel">
+      <h2>What the agent believes vs what is true</h2>
+      <table id="truth">
+        <thead><tr><th></th><th>Agent believes<br><span class="sub">(verified)</span></th><th>Reality<br><span class="sub">(read from the systems)</span></th><th></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div id="truth-error" class="warn"></div>
+    </section>
+
+    <section class="panel" id="chaos-panel">
+      <h2>Break things</h2>
+      <div class="buttons" id="chaos-buttons"></div>
+      <h2 class="spaced">Amnesia</h2>
+      <div class="buttons">
+        <button id="btn-wipe" class="danger">Wipe agent memory</button>
+        <button id="btn-reconcile">Reconcile &amp; resume</button>
+      </div>
+    </section>
+
+    <section class="panel" id="feed-panel">
+      <h2>What is happening</h2>
+      <ol id="feed" aria-live="polite"></ol>
+    </section>
+
+    <section class="panel" id="explain-panel">
+      <h2>Explain <button id="btn-explain">Refresh</button></h2>
+      <div class="cols3">
+        <div><h3>Supposed to happen</h3><div id="ex-supposed" class="body">-</div></div>
+        <div><h3>Actually happened (verified)</h3><div id="ex-actual" class="body">-</div></div>
+        <div><h3>Safe next</h3><div id="ex-next" class="body">-</div></div>
+      </div>
+    </section>
+
+    <section class="panel" id="learn-panel">
+      <h2>What it has learned</h2>
+      <table id="learn-runs"><thead><tr><th>Run</th><th>Diagnosis calls</th><th>Memory hits</th><th>Seconds</th></tr></thead><tbody></tbody></table>
+      <ul id="memories"></ul>
+    </section>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
