@@ -251,7 +251,7 @@ The demo's wrong first proposal (env `PHOENIX_DEMO_WRONG_FIRST=1`, first proposa
 - Additions beyond the original list: `GET /runs` (latest 20), `GET /chaos` (mock chaos state), `GET /memories` (recovery_memories without embeddings), `GET /runs/{run_id}/attempts/{task_id}`. `POST /runs` returns 409 while a PLANNING/RUNNING run exists. `wipe_state` and `reconcile` return 409 while the agent is alive. `GET /events` accepts `tail` (default 100: replay the last N events when there is no `Last-Event-ID`).
 - SSE resume: event `_id` is an ObjectId string, but ids from two processes created in the same second are not strictly ordered, so the stream re-reads from 3 s before its cursor and de-duplicates by id. Clients must de-duplicate by `_id` as well.
 - `GET /learning/stats` -> `{ "runs": [ { "run_id", "event_id", "diagnosis_calls": 1, "memory_hits": 0, "duration_s": 41.2 } ] }`
-- `POST /reset` -> resets mock world, clears this app's collections, keeps `recovery_memories` unless `?keep_memories=false`.
+- `POST /reset` -> resets mock world, clears this app's collections, keeps `recovery_memories` unless `?keep_memories=false`. `?attendees=N` (1..200, default 200) reseeds a smaller event: with ~100 ms round trips to Atlas each task takes ~2.5 s, so a full 601-task run is ~25 min.
 
 ---
 

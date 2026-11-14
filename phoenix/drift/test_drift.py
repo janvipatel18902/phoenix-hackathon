@@ -253,9 +253,12 @@ class Harness:
 
 @pytest.fixture
 def h(tmp_path: Path, monkeypatch) -> Harness:
-    monkeypatch.delenv("LLM_PROVIDER", raising=False)
-    monkeypatch.delenv("EMBEDDING_BASE_URL", raising=False)
-    monkeypatch.delenv("PHOENIX_DEMO_WRONG_FIRST", raising=False)
+    # phoenix.db loads the real .env on import: keep these tests offline.
+    for name in (
+        "LLM_PROVIDER", "LLM_API_KEY", "GROQ_API_KEY", "EMBEDDING_BASE_URL",
+        "EMBEDDING_DIM", "PHOENIX_DEMO_WRONG_FIRST",
+    ):  # fmt: skip
+        monkeypatch.delenv(name, raising=False)
     return Harness(tmp_path)
 
 
@@ -372,3 +375,49 @@ def test_embedding_is_deterministic_and_retrieval_scans_without_an_index(
         h.db, "payments", "venue booking cancelled twice", "positive"
     )
     assert unrelated.hits == []
+
+
+# --- LLM providers (no network: respx) ---
+
+
+def test_groq_is_selected_from_env_and_think_blocks_are_ignored(monkeypatch) -> None:
+    import respx
+
+    monkeypatch.delenv("LLM_PROVIDER", raising=False)
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setenv("GROQ_MODEL", "m")
+    monkeypatch.setenv("GROQ_BASE_URL", "https://groq.test/openai/v1")
+    reply = (
+        "<think>maybe {braces} here</think>\n```json\n"
+        + __import__("json").dumps(GOOD_SPEC)
+        + "\n```"
+    )
+    with respx.mock:
+        route = respx.post("https://groq.test/openai/v1/chat/completions").respond(
+            200, json={"choices": [{"message": {"content": reply}}]}
+        )
+        sig = diagnose.build_signature("payments", 422, {"details": DETAILS})
+        proposal = diagnose.propose_spec("payments", sig, ctx(), [])
+    assert route.called and proposal.used_llm
+    assert route.calls[0].request.headers["authorization"] == "Bearer k"
+    assert validate_spec(proposal.spec, ctx())
+
+
+def test_llm_failure_falls_back_to_the_heuristic(monkeypatch) -> None:
+    import httpx
+    import respx
+
+    monkeypatch.setenv("GROQ_API_KEY", "k")
+    monkeypatch.setenv("GROQ_MODEL", "m")
+    monkeypatch.setenv("GROQ_BASE_URL", "https://groq.test/openai/v1")
+    sig = diagnose.build_signature("payments", 422, {"details": DETAILS})
+    with respx.mock:
+        respx.post("https://groq.test/openai/v1/chat/completions").mock(
+            side_effect=httpx.ConnectError("down")
+        )
+        proposal = diagnose.propose_spec("payments", sig, ctx(), [])
+    assert not proposal.used_llm and "fallback" in proposal.note
+    assert (
+        apply_spec(validate_spec(proposal.spec, ctx()), V1_BODY, {})["amount_minor"]
+        == 8500
+    )

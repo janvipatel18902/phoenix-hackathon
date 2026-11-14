@@ -33,6 +33,7 @@ def clear_collections(db: Database, drop_memories: bool) -> dict[str, int]:
 def main() -> None:
     drop_memories = "--drop-memories" in sys.argv
     db = init_db()
+    print(f"database: {db.name}")  # so an operator always sees what is being cleared
     for name, deleted in clear_collections(db, drop_memories).items():
         print(f"cleared {name}: {deleted} docs")
     if not drop_memories:

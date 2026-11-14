@@ -78,6 +78,8 @@ def test_create_run_and_single_active_run(env: Env) -> None:
         and run["state_counts"]["PLANNED"] == 0
     )
     assert env.api.post("/runs", json={}).status_code == 409
+    # real Mongo cannot $set worker.pid into worker: null (the heartbeat does exactly that)
+    assert "worker" not in env.db.runs.find_one({"_id": run_id})
     assert env.api.get("/runs/nope").status_code == 404
 
 

@@ -25,6 +25,7 @@ from phoenix.db import RECOVERY_MEMORIES, now_iso
 VECTOR_INDEX_NAME = "recovery_memories_vec"
 EMBED_TIMEOUT_S = 15.0
 DEFAULT_LOCAL_DIM = 256
+ATLAS_DEFAULT_DIM = 1024
 
 
 class EmbeddingError(RuntimeError):
@@ -32,8 +33,14 @@ class EmbeddingError(RuntimeError):
 
 
 def embedding_dim() -> int:
+    """EMBEDDING_DIM if set, else 1024 for the Atlas endpoint (voyage-4-lite,
+    confirmed by Person A) or 256 for the local fallback embedding."""
     raw = os.environ.get("EMBEDDING_DIM", "")
-    return int(raw) if raw.isdigit() else DEFAULT_LOCAL_DIM
+    if raw.isdigit():
+        return int(raw)
+    return (
+        ATLAS_DEFAULT_DIM if os.environ.get("EMBEDDING_BASE_URL") else DEFAULT_LOCAL_DIM
+    )
 
 
 def min_score() -> float:
@@ -210,14 +217,9 @@ def vector_index_definition(dimensions: int) -> dict[str, Any]:
 
 
 def ensure_vector_index(db: Database) -> str:
-    """Idempotent. Returns "created", "exists" or "skipped: <why>".
-
-    Lives here, not in db.py: Atlas Search indexes only exist on Atlas, and a
-    missing EMBEDDING_DIM must not stop the engine from starting.
-    """
-    raw_dim = os.environ.get("EMBEDDING_DIM", "")
-    if not raw_dim.isdigit():
-        return "skipped: EMBEDDING_DIM is not set"
+    """Idempotent. Returns "created" or "exists". Lives here, not in db.py:
+    Atlas Search indexes only exist on Atlas. The dimension must match what
+    embed() produces, so both come from embedding_dim()."""
     if RECOVERY_MEMORIES not in db.list_collection_names():
         db.create_collection(RECOVERY_MEMORIES)  # search index needs the collection
     collection = db[RECOVERY_MEMORIES]
@@ -227,7 +229,7 @@ def ensure_vector_index(db: Database) -> str:
         return "exists"
     collection.create_search_index(
         SearchIndexModel(
-            definition=vector_index_definition(int(raw_dim)),
+            definition=vector_index_definition(embedding_dim()),
             name=VECTOR_INDEX_NAME,
             type="vectorSearch",
         )

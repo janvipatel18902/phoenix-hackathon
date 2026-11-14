@@ -151,6 +151,7 @@ def _llm_prompt(
     signature: dict[str, Any],
     ctx: SpecContext,
     rejected: list[dict[str, Any]],
+    feedback: list[str],
 ) -> str:
     return (
         "A payments API changed. Propose a declarative adaptation spec as JSON ONLY.\n"
@@ -161,37 +162,76 @@ def _llm_prompt(
         "to_type,rounding}; add_field {op,field,value:{source:'constant'|'task_field',value}};"
         " remove_field {op,field}. Types: decimal_string, integer, number.\n"
         'Shape: {"spec_version":1,"system":"payments","operation":"create_refund","ops":[...]}\n'
-        "Money must stay equal: 85.00 dollars becomes 8500 minor units.\n"
+        "Context: this agent is cancelling a whole event and refunding every attendee. "
+        "Money must stay equal: 85.00 dollars becomes 8500 minor units. "
+        "Copy enum values exactly as the API spells them.\n"
+        f"What the API or a dry run told us about earlier attempts: {json.dumps(feedback)}\n"
         f"Specs already tried and rejected by the canary: {json.dumps(rejected)}\n"
         "Reply with the JSON object only."
     )
 
 
-def call_llm(prompt: str) -> str:
-    """Anthropic Messages API over httpx. Raises LLMError on any failure."""
-    if os.environ.get("LLM_PROVIDER", "").lower() != "anthropic":
-        raise LLMError("LLM_PROVIDER is not 'anthropic'")
+def _llm_provider() -> str:
+    explicit = os.environ.get("LLM_PROVIDER", "").lower()
+    if explicit:
+        return explicit
+    return "groq" if os.environ.get("GROQ_API_KEY") else ""
+
+
+def _call_anthropic(prompt: str) -> str:
     key, model = os.environ.get("LLM_API_KEY"), os.environ.get("LLM_MODEL")
     if not key or not model:
         raise LLMError("LLM_API_KEY / LLM_MODEL not set")
+    resp = httpx.post(
+        ANTHROPIC_URL,
+        headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+        json={
+            "model": model,
+            "max_tokens": 600,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=LLM_TIMEOUT_S,
+    )
+    resp.raise_for_status()
+    return str(resp.json()["content"][0]["text"])
+
+
+def _call_groq(prompt: str) -> str:
+    """Groq's OpenAI-compatible chat completions endpoint."""
+    key, model = os.environ.get("GROQ_API_KEY"), os.environ.get("GROQ_MODEL")
+    base = os.environ.get("GROQ_BASE_URL", "https://api.groq.com/openai/v1").rstrip("/")
+    if not key or not model:
+        raise LLMError("GROQ_API_KEY / GROQ_MODEL not set")
+    resp = httpx.post(
+        f"{base}/chat/completions",
+        headers={"Authorization": f"Bearer {key}"},
+        json={
+            "model": model,
+            "temperature": 0,
+            "max_tokens": 2000,  # headroom: reasoning models think before answering
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        timeout=LLM_TIMEOUT_S,
+    )
+    resp.raise_for_status()
+    return str(resp.json()["choices"][0]["message"]["content"])
+
+
+def call_llm(prompt: str) -> str:
+    """Returns the model's text. Raises LLMError on any failure (no provider,
+    HTTP error, malformed reply) so the caller can fall back to the heuristic."""
+    provider = _llm_provider()
+    callers = {"anthropic": _call_anthropic, "groq": _call_groq}
+    if provider not in callers:
+        raise LLMError("no LLM provider configured")
     try:
-        resp = httpx.post(
-            ANTHROPIC_URL,
-            headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-            json={
-                "model": model,
-                "max_tokens": 600,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=LLM_TIMEOUT_S,
-        )
-        resp.raise_for_status()
-        return str(resp.json()["content"][0]["text"])
+        return callers[provider](prompt)
     except (httpx.HTTPError, KeyError, IndexError, ValueError) as exc:
         raise LLMError(f"LLM call failed: {type(exc).__name__}") from exc
 
 
 def parse_llm_json(text: str) -> dict[str, Any]:
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)  # reasoning models
     match = re.search(r"\{.*\}", text, re.DOTALL)
     if match is None:
         raise LLMError("no JSON object in LLM reply")
@@ -209,6 +249,7 @@ def propose_spec(
     signature: dict[str, Any],
     ctx: SpecContext,
     rejected: list[dict[str, Any]],
+    feedback: list[str] | None = None,
 ) -> Proposal:
     """First proposal may be deliberately wrong when PHOENIX_DEMO_WRONG_FIRST=1
     (the canary demo). After a rejection we go to the LLM / correct heuristic."""
@@ -218,7 +259,9 @@ def propose_spec(
             spec, used_llm=False, note="demo: deliberately incomplete first proposal"
         )
     try:
-        spec = parse_llm_json(call_llm(_llm_prompt(system, signature, ctx, rejected)))
+        spec = parse_llm_json(
+            call_llm(_llm_prompt(system, signature, ctx, rejected, feedback or []))
+        )
         return Proposal(spec, used_llm=True, note="proposed by the LLM")
     except LLMError as exc:
         spec = heuristic_spec(system, signature, ctx)

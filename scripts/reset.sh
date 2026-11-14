@@ -6,7 +6,15 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-if [ -f .env ]; then set -a; . ./.env; set +a; fi
+# Load .env, but never override variables already set in the environment
+# (so `MONGODB_DB=scratch scripts/reset.sh` really targets "scratch").
+if [ -f .env ]; then
+  while IFS='=' read -r key value || [ -n "$key" ]; do
+    case "$key" in ''|\#*) continue ;; esac
+    value="${value%\"}"; value="${value#\"}"; value="${value%\'}"; value="${value#\'}"
+    if [ -z "${!key+x}" ]; then export "$key=$value"; fi
+  done < .env
+fi
 MOCK_URL="${MOCK_WORLD_URL:-http://localhost:8001}"
 if [ -x .venv/bin/python ]; then PY=.venv/bin/python; else PY="${PYTHON:-python3}"; fi
 

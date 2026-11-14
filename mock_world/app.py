@@ -274,7 +274,10 @@ class World:
                 minor = minor_in
             if body["reason_code"] not in REASON_CODES:
                 errors.append(
-                    {"field": "reason_code", "message": "invalid reason_code"}
+                    {
+                        "field": "reason_code",
+                        "message": "must be one of " + ", ".join(REASON_CODES),
+                    }
                 )
         if not errors and minor <= 0:
             errors.append({"field": "amount", "message": "must be positive"})

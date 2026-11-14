@@ -173,6 +173,7 @@ def resolve_drift(
     )  # fmt: skip
 
     rejected = _known_bad(db, system, description)
+    feedback: list[str] = []
     candidates = _recall(db, emit, run_id, system, description, tid, rejected)
     for attempt in range(MAX_PROPOSALS):
         if candidates:
@@ -183,7 +184,9 @@ def resolve_drift(
             )
         else:
             try:
-                proposal = diagnose.propose_spec(system, signature, ctx, rejected)
+                proposal = diagnose.propose_spec(
+                    system, signature, ctx, rejected, feedback
+                )
             except SpecError as exc:
                 return _give_up(
                     db, emit, run_id, tid, f"could not propose an adaptation: {exc}"
@@ -194,6 +197,7 @@ def resolve_drift(
             spec = validate_spec(raw, ctx)
         except SpecError as exc:
             rejected.append(raw)
+            feedback.append(f"spec rejected before testing: {exc}")
             emit(db, run_id, EventLevel.WARN, EventType.ADAPTATION_PROPOSED,
                  f"A proposed fix was rejected before testing: {exc}", task_id=tid,
                  data={"spec": raw, "valid": False})  # fmt: skip
@@ -223,6 +227,7 @@ def resolve_drift(
                  task_id=tid, data={"memory_id": mem_id, "polarity": "positive"})  # fmt: skip
             return DriftOutcome("ADAPTED", "canary passed", sid, mem_id)
         rejected.append(spec_to_dict(spec))
+        feedback.append(f"dry run of {spec_to_dict(spec)['ops']} returned {observed}")
         mem_id, _ = memory.save_memory(
             db, run_id=run_id, system=system, signature=signature, description=description,
             spec=spec_to_dict(spec), canary_result=result, polarity="negative",

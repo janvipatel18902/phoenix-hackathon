@@ -228,7 +228,9 @@ def create_app(
                 api_versions_seen={"payments": 1},
                 created_at=ts,
                 updated_at=ts,
-            ).model_dump(by_alias=True)
+            ).model_dump(
+                by_alias=True, exclude={"worker"}
+            )  # worker is $set by the heartbeat; null breaks it
             try:
                 d[RUNS].insert_one(doc)
             except DuplicateKeyError:
@@ -499,6 +501,8 @@ def create_app(
             raise HTTPException(409, f"worker already running (pid {existing})")
         opts = body or StartRequest()
         env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        # The worker requires MOCK_WORLD_URL; default it to the mock we proxy to.
+        env.setdefault("MOCK_WORLD_URL", str(mock.base_url).rstrip("/"))
         env.pop("PHOENIX_CRASH_AT", None)
         env.pop("PHOENIX_DEMO_WRONG_FIRST", None)
         if opts.crash_at:
@@ -630,7 +634,9 @@ def create_app(
         return {"memories": list(docs)}
 
     @app.post("/reset")
-    def reset(keep_memories: bool = True) -> dict[str, Any]:
+    def reset(
+        keep_memories: bool = True, attendees: int = Query(200, ge=1, le=200)
+    ) -> dict[str, Any]:
         d = get_db()
         pid = worker_pid(d)
         if pid is not None:
@@ -638,7 +644,7 @@ def create_app(
         try:
             resp = mock.post(
                 "/admin/reset",
-                json={"event_id": "evt_concert_001", "attendees": 200, "seed": 1},
+                json={"event_id": "evt_concert_001", "attendees": attendees, "seed": 1},
             )
             resp.raise_for_status()
         except httpx.HTTPError as exc:
