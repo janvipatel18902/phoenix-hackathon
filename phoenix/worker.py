@@ -400,8 +400,11 @@ def recover_run(db: Database, client: httpx.Client, run_id: str) -> None:
 
 def _heartbeat_loop(db: Database, run_id: str, stop: threading.Event, pid: int) -> None:
     while not stop.is_set():
+        # Replace the whole subdocument, not dotted fields: `worker` starts as
+        # null on a fresh run, and Mongo refuses to create a nested field
+        # inside a null via a dotted $set.
         db[RUNS].update_one(
-            {"_id": run_id}, {"$set": {"worker.pid": pid, "worker.heartbeat_at": now_iso()}}
+            {"_id": run_id}, {"$set": {"worker": {"pid": pid, "heartbeat_at": now_iso()}}}
         )
         stop.wait(HEARTBEAT_INTERVAL_S)
 
