@@ -11,10 +11,10 @@ import os
 import signal
 import threading
 import time
-import uuid
 from typing import Any
 
 import httpx
+from bson import ObjectId
 from pymongo.database import Database
 
 from phoenix.db import EVENTS, RUNS, TASKS, init_db, now_iso
@@ -76,15 +76,24 @@ def emit_event(
     message: str,
     task_id: str | None = None,
     data: dict[str, Any] | None = None,
+    source: EventSource = EventSource.WORKER,
 ) -> None:
+    """Shared by worker.py, reconcile.py, and api/main.py (api emits its own
+    events for e.g. WORKER_KILLED, CHAOS_APPLIED, STATE_WIPED -- pass
+    source=EventSource.API or EventSource.CHAOS for those).
+
+    _id is a bson ObjectId string: monotonically sortable by creation order,
+    so GET /events's `Last-Event-ID` can resume a stream with a plain
+    `_id > last_seen_id` query instead of needing a separate sequence counter.
+    """
     db[EVENTS].insert_one(
         {
-            "_id": uuid.uuid4().hex,
+            "_id": str(ObjectId()),
             "ts": now_iso(),
             "run_id": run_id,
             "task_id": task_id,
             "level": level.value,
-            "source": EventSource.WORKER.value,
+            "source": source.value,
             "type": type_.value,
             "message": message,
             "data": data or {},

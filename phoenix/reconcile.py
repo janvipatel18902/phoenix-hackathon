@@ -13,10 +13,27 @@ from typing import Any
 import httpx
 from pymongo.database import Database
 
-from phoenix.db import TASKS
+from phoenix.db import RUNS, TASKS
 from phoenix.models import EffectSource, EventLevel, EventType, TaskState
 from phoenix.recover import recover_task
 from phoenix.worker import build_plan, emit_event
+
+
+def trigger_reconcile(db: Database, client: httpx.Client, run_id: str) -> dict[str, Any]:
+    """Entry point for api/main.py's POST /runs/{run_id}/reconcile.
+
+    Only needs run_id -- looks up event_id and booking_id from the run doc
+    itself, the same way worker.py's run_worker_for does for build_plan.
+    Synchronous: runs to completion and returns {"checked", "findings"}. The
+    API can call this directly in a request handler, or hand it to a thread
+    if it wants the HTTP response to return before reconcile finishes --
+    that choice belongs to api/main.py, not here.
+    """
+    run = db[RUNS].find_one({"_id": run_id})
+    if run is None:
+        raise ValueError(f"run {run_id} not found")
+    booking_id = run.get("assumptions", {}).get("booking_id", "book_001")
+    return reconcile(db, client, run_id, run["event_id"], booking_id)
 
 
 def reconcile(

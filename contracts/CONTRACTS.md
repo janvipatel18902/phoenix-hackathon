@@ -264,6 +264,7 @@ LLM_PROVIDER=
 LLM_MODEL=
 LLM_API_KEY=
 EMBEDDING_PROVIDER=
+EMBEDDING_BASE_URL=
 EMBEDDING_MODEL=
 EMBEDDING_API_KEY=
 EMBEDDING_DIM=
@@ -277,3 +278,9 @@ PHOENIX_CRASH_AT=
 ## 10. Change log
 (Add one line per change: date/time, who, what, which section.)
 - 2026-11-14, Person A, moved this file from repo root to contracts/CONTRACTS.md to match CLAUDE.md's layout; added two recovery/reconcile-only transitions (INTENT_RECORDED -> VERIFYING, PLANNED -> VERIFYING) needed to implement the "always verify before resend" rule in section 3 and the amnesia-reconcile flow; section 3.
+- 2026-11-14, Person A, added EMBEDDING_BASE_URL to section 9: embeddings go through MongoDB Atlas's hosted AI Model API (ai.mongodb.com, a Voyage AI proxy billed under the Atlas sandbox project) rather than a direct Voyage AI account, so phoenix/drift/memory.py needs a base URL, not just a provider name.
+- 2026-11-14, Person A, confirmed against the live endpoint: POST {EMBEDDING_BASE_URL}/v1/embeddings, body `{"input": [...], "model": "..."}`, header `Authorization: Bearer {EMBEDDING_API_KEY}` -> `{"data": [{"embedding": [...]}], "usage": {...}}`. Supported models: voyage-4-large, voyage-code-4, voyage-4, voyage-4-lite, voyage-code-2, voyage-law-2, voyage-finance-2, voyage-code-3, voyage-3-large, voyage-3.5-lite, voyage-3.5 (voyage-2 is NOT supported on this endpoint, despite EMBEDDING_PROVIDER=voyageai). Using voyage-4-lite, confirmed 1024 dims -- matches EMBEDDING_DIM already in section 9/.env, no change needed there.
+- 2026-11-14, Person A, three integration points for api/main.py (Person B), per section 7:
+  - `phoenix.worker.emit_event(db, run_id, level, type_, message, task_id=None, data=None, source=EventSource.WORKER)` -- now takes `source`, so api/main.py should pass `source=EventSource.API` (e.g. for WORKER_KILLED after `/agent/kill`, STATE_WIPED after `/wipe_state`) or `source=EventSource.CHAOS` (after proxying `/chaos/{name}`). Default stays WORKER so existing call sites in worker.py/reconcile.py are unchanged.
+  - `events._id` is now `str(bson.ObjectId())` instead of a random uuid4 hex, specifically so it's monotonically sortable by creation order. `GET /events`'s `Last-Event-ID` resume can now be implemented as a plain `{"_id": {"$gt": last_event_id}}` query sorted by `_id` ascending -- no separate sequence counter needed.
+  - `phoenix.reconcile.trigger_reconcile(db, client, run_id)` is the entry point for `POST /runs/{run_id}/reconcile`. It looks up `event_id`/`booking_id` from the run doc itself, so the handler only needs `run_id` from the URL. It's synchronous (runs to completion, returns `{"checked", "findings"}`); whether to run it inline or hand it to a background thread so the HTTP response returns early is api/main.py's call, not phoenix/'s.
