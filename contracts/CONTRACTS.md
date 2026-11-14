@@ -7,6 +7,7 @@ Conventions
 - All timestamps: ISO 8601 UTC strings (`2026-11-14T15:04:05.123Z`).
 - Money is held internally as integer minor units (cents) in `amount_minor`. Payments API v1 exposes dollars as a decimal STRING with 2 places (`"85.00"`), never a float.
 - Ids are strings. Seed ids: event `evt_concert_001`, attendees `att_001`..`att_200`, booking `book_001`, currency `CAD`.
+- Seed data: ALL 200 attendees paid `85.00` CAD (8500 minor units), so a full refund run totals 1,700,000 minor units. Seed `record_version` is 3 and the attendee-list `version` is 12.
 - Ports: mock_world 8001, api 8000.
 - External call timeout: 3 s (writes and verification reads).
 
@@ -175,6 +176,7 @@ Event types: `RUN_STARTED, PLAN_CREATED, TASK_INTENT, TASK_SENT, TASK_ACKED, TAS
   Same key again -> `200` with the original body and header `Idempotent-Replay: true` (no second refund).
 - `GET /payments/refunds?idempotency_key=...` or `?attendee_id=...` -> `{ "refunds": [ ... ] }`
 - `GET /payments/refunds/{refund_id}`
+- **Dry run:** `POST /payments/refunds?dry_run=true` validates the body under the CURRENT API version and returns `200 { "dry_run": true, "would_store": { "attendee_id", "amount_minor": 8500, "currency": "CAD" } }` (v2 adds `"reason_code"`) without committing anything: no refund, no idempotency-key entry, no `/admin/reality` change. `would_store` is always in minor units regardless of version, normalized from whatever the body said. An invalid body returns the SAME 422 as the real call. The `Idempotency-Key` header is not required and is ignored. Dry runs are exempt from chaos (latency, drop, fail).
 
 ### Payments (API version 2, after chaos `api_version`)
 - `POST /payments/refunds` body `{ "attendee_id", "amount_minor": 8500, "currency": "CAD", "reason_code": "EVENT_CANCELLED" }`
@@ -191,7 +193,8 @@ Event types: `RUN_STARTED, PLAN_CREATED, TASK_INTENT, TASK_SENT, TASK_ACKED, TAS
 - `GET /venue/bookings/{booking_id}` -> `{ "booking_id", "status": "active|cancelled" }`
 
 ### Admin and chaos
-- `POST /admin/reset` body `{ "event_id": "evt_concert_001", "attendees": 200, "seed": 1 }` -> reseeds everything.
+Chaos `latency`, `drop_response_after_commit` and `fail_before_commit` apply to committing POST requests ONLY. GETs (including verification reads and `/admin/*`) are never delayed, failed or dropped, and neither is `?dry_run=true`. Order for a committing POST: latency, then validation (a 422 never consumes a fail/drop count), then `fail_before_commit` (500, not applied), then commit, then `drop_response_after_commit` (the commit stands, the handler sleeps past the client's 3 s timeout, `MOCK_DROP_SLEEP_S`, default 3.5). A drop only fires when something was actually committed. `nth: k` means "fire once, on the k-th matching write" (count is ignored); otherwise `count` consecutive matching writes fire. `POST /admin/chaos/clear` removes all drop/fail/latency rules and resets payments to API v1 (mutated records are not undone; use `/admin/reset`).
+- `POST /admin/reset` body `{ "event_id": "evt_concert_001", "attendees": 200, "seed": 1 }` -> reseeds everything (all attendees paid `85.00`; `seed` is recorded only), clears chaos, payments back to API v1.
 - `GET /admin/reality` -> `{ "payments": { "refund_count": 88, "total_minor": 748000, "duplicate_refunds": 0 }, "ticketing": { "cancelled": 88 }, "notifications": { "sent": 87 }, "venue": { "status": "active" }, "payments_api_version": 1 }`
   `duplicate_refunds` counts attendees refunded more than once (the double-refund detector).
 - `GET /admin/chaos` -> current chaos state.
@@ -219,7 +222,10 @@ Event types: `RUN_STARTED, PLAN_CREATED, TASK_INTENT, TASK_SENT, TASK_ACKED, TAS
 ```
 Allowed ops ONLY: `rename_field`, `scale_value`, `add_field`, `remove_field`. `add_field` value sources: `constant`, `task_field` (name of a task expected_effect field). The validator rejects unknown ops, unknown sources, non-numeric or out-of-range factors, and fields that do not appear in the error details or request schema.
 
-Canary: apply the spec to exactly ONE task (the first affected REFUND), run the normal send + verify path, and require `matches_expected`. Only then continue the batch and save or reinforce the memory. A failed canary saves a `negative` memory. The demo's wrong first proposal is the spec above WITHOUT the `scale_value` op (refunds 85 cents instead of 8500); the canary must catch it.
+Canary: apply the spec to the first affected REFUND and DRY-RUN it (`POST /payments/refunds?dry_run=true`, section 5). Compare `would_store` to the task's `expected_effect`.
+- Mismatch: save a `negative` memory, record an `effects` doc with `source: canary` and `matches_expected: false`, emit `CANARY_FAILED`. NOTHING is sent for real, so no money moves.
+- Match: send that task for real through the normal path (intent, send, external-read verify), emit `CANARY_PASSED`, then continue the batch and save or reinforce the memory.
+The demo's wrong first proposal is the spec above WITHOUT the `scale_value` op (it would store 85 minor units instead of 8500); the dry run must catch it.
 
 ---
 
@@ -277,3 +283,7 @@ PHOENIX_CRASH_AT=
 ## 10. Change log
 (Add one line per change: date/time, who, what, which section.)
 - 2026-11-14, Person A, moved this file from repo root to contracts/CONTRACTS.md to match CLAUDE.md's layout; added two recovery/reconcile-only transitions (INTENT_RECORDED -> VERIFYING, PLANNED -> VERIFYING) needed to implement the "always verify before resend" rule in section 3 and the amnesia-reconcile flow; section 3.
+- 2026-11-14, Person B, seed: all 200 attendees paid 85.00 CAD (record_version 3, list version 12); Conventions and section 5 (`/admin/reset`).
+- 2026-11-14, Person B, chaos latency/drop/fail apply to committing POST requests only; GETs and dry runs are never affected; `clear` also resets payments to v1; defined `nth` and the fail/drop ordering; section 5 (Admin and chaos).
+- 2026-11-14, Person B, added payments dry run `POST /payments/refunds?dry_run=true` returning `{dry_run, would_store}` without committing; section 5 (Payments).
+- 2026-11-14, Person B, canary now dry-runs the first affected REFUND, compares `would_store` to `expected_effect`, and only sends for real on a match; a mismatch saves a negative memory and sends nothing; section 6. (Resolves the conflict with invariant 5.)
